@@ -1,0 +1,9 @@
+# Guild Master Pennant - Python Dependencies
+
+# No external dependencies required for the core system!
+# The multi-agent system is built using Python standard library only.
+
+# Optional: For enhanced development
+# pytest>=7.0.0  # For testing
+# black>=22.0.0  # For code formatting
+# pylint>=2.15.0  # For linting
