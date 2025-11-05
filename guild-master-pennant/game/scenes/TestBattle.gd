@@ -3,13 +3,13 @@ extends Control
 # TestBattle.gd - テスト戦闘シーン
 # class_nameで定義されたグローバルクラスは自動的に利用可能
 
-# UI要素
-@onready var log_text = $VBoxContainer/LogPanel/LogText
-@onready var party_info = $VBoxContainer/PartyPanel/PartyInfo
-@onready var enemy_info = $VBoxContainer/EnemyPanel/EnemyInfo
-@onready var next_turn_button = $VBoxContainer/ButtonPanel/NextTurnButton
-@onready var auto_button = $VBoxContainer/ButtonPanel/AutoButton
-@onready var back_button = $VBoxContainer/ButtonPanel/BackButton
+# UI要素（実行時に取得、存在しない場合はnull）
+var log_text: RichTextLabel
+var party_info: RichTextLabel
+var enemy_info: RichTextLabel
+var next_turn_button: Button
+var auto_button: Button
+var back_button: Button
 
 # ゲームシステム
 var party_manager: PartyManager
@@ -21,6 +21,14 @@ var auto_mode: bool = false
 
 func _ready():
 	print("=== テスト戦闘シーン ===")
+
+	# UI要素を取得（存在しない場合はnull）
+	log_text = get_node_or_null("VBoxContainer/LogPanel/LogText")
+	party_info = get_node_or_null("VBoxContainer/PartyPanel/PartyInfo")
+	enemy_info = get_node_or_null("VBoxContainer/EnemyPanel/EnemyInfo")
+	next_turn_button = get_node_or_null("VBoxContainer/ButtonPanel/NextTurnButton")
+	auto_button = get_node_or_null("VBoxContainer/ButtonPanel/AutoButton")
+	back_button = get_node_or_null("VBoxContainer/ButtonPanel/BackButton")
 
 	# ボタン接続
 	if next_turn_button:
@@ -39,10 +47,10 @@ func _initialize_game():
 	# パーティ作成
 	_log("\n=== パーティ編成 ===")
 	party = [
-		Adventurer.new("アーサー", "Warrior"),
-		Adventurer.new("メルラン", "Mage"),
-		Adventurer.new("エレナ", "Priest"),
-		Adventurer.new("ロビン", "Archer")
+		Adventurer.new("アーサー", JobClass.Type.WARRIOR),
+		Adventurer.new("メルラン", JobClass.Type.MAGE),
+		Adventurer.new("エレナ", JobClass.Type.PRIEST),
+		Adventurer.new("ロビン", JobClass.Type.ARCHER)
 	]
 
 	# 隊列設定
@@ -52,7 +60,7 @@ func _initialize_game():
 	for member in party:
 		_log("  %s (%s) - HP:%d 攻撃:%d" % [
 			member.adventurer_name,
-			member.job_class,
+			JobClass.get_job_name(member.job_class),
 			member.max_hp,
 			member.attack
 		])
@@ -78,20 +86,18 @@ func _initialize_game():
 	_log("\n戦闘開始！")
 	_update_display()
 
-func _create_enemy(enemy_name: String, hp: int, attack: int, defense: int) -> Node:
-	"""簡易的な敵を作成"""
-	var enemy = Node.new()
-	enemy.name = enemy_name
-	enemy.set_meta("adventurer_name", enemy_name)
-	enemy.set_meta("max_hp", hp)
-	enemy.set_meta("current_hp", hp)
-	enemy.set_meta("attack", attack)
-	enemy.set_meta("defense", defense)
-	enemy.set_meta("speed", 8)
-	enemy.set_meta("is_alive", true)
+func _create_enemy(enemy_name: String, hp: int, attack: int, defense: int):
+	"""簡易的な敵を作成 - EnemyGenerator.Enemyを使用"""
+	var enemy_gen = EnemyGenerator.new()
+	var enemy = enemy_gen.Enemy.new(enemy_name, 1.0)
 
-	# 敵用メソッドを追加
-	enemy.set_script(load("res://scripts/EnemyBehavior.gd") if ResourceLoader.exists("res://scripts/EnemyBehavior.gd") else null)
+	# カスタムステータスを設定
+	enemy.max_hp = hp
+	enemy.current_hp = hp
+	enemy.attack = attack
+	enemy.defense = defense
+	enemy.speed = 8
+	enemy.name = enemy_name
 
 	return enemy
 
@@ -123,19 +129,17 @@ func _execute_simple_turn() -> Array:
 		if not member.is_alive:
 			continue
 
-		var alive_enemies = enemies.filter(func(e): return e.get_meta("is_alive"))
+		var alive_enemies = enemies.filter(func(e): return e.is_alive)
 		if alive_enemies.size() == 0:
 			break
 
 		var target = alive_enemies[0]
-		var damage = max(1, member.get_effective_attack() - target.get_meta("defense"))
+		var damage = max(1, member.get_effective_attack() - target.defense)
 
-		var new_hp = target.get_meta("current_hp") - damage
-		target.set_meta("current_hp", new_hp)
-
-		if new_hp <= 0:
-			target.set_meta("current_hp", 0)
-			target.set_meta("is_alive", false)
+		target.current_hp -= damage
+		if target.current_hp <= 0:
+			target.current_hp = 0
+			target.is_alive = false
 			results.append("%s が %s に %d ダメージ！ %s は倒れた！" % [
 				member.adventurer_name, target.name, damage, target.name
 			])
@@ -146,7 +150,7 @@ func _execute_simple_turn() -> Array:
 
 	# 敵の攻撃
 	for enemy in enemies:
-		if not enemy.get_meta("is_alive"):
+		if not enemy.is_alive:
 			continue
 
 		var alive_party = party.filter(func(m): return m.is_alive)
@@ -155,7 +159,7 @@ func _execute_simple_turn() -> Array:
 
 		# 被弾率に基づいてターゲット選択
 		var target = _select_target_by_hit_rate(alive_party)
-		var damage = max(1, enemy.get_meta("attack") - target.get_effective_defense())
+		var damage = max(1, enemy.attack - target.get_effective_defense())
 
 		target.current_hp -= damage
 		if target.current_hp <= 0:
@@ -194,7 +198,7 @@ func _select_target_by_hit_rate(targets: Array):
 func _check_battle_end() -> bool:
 	"""戦闘終了判定"""
 	var alive_party = party.filter(func(m): return m.is_alive)
-	var alive_enemies = enemies.filter(func(e): return e.get_meta("is_alive"))
+	var alive_enemies = enemies.filter(func(e): return e.is_alive)
 
 	if alive_party.size() == 0:
 		_log("\n=== 敗北... ===")
@@ -253,7 +257,7 @@ func _update_party_display():
 			var status = "生存" if member.is_alive else "戦闘不能"
 			text += "%s (%s)\n  HP: %d/%d (%s)\n" % [
 				member.adventurer_name,
-				member.job_class,
+				JobClass.get_job_name(member.job_class),
 				member.current_hp,
 				member.max_hp,
 				status
@@ -265,11 +269,11 @@ func _update_enemy_display():
 	if enemy_info:
 		var text = "=== 敵 ===\n"
 		for enemy in enemies:
-			var status = "生存" if enemy.get_meta("is_alive") else "撃破"
+			var status = "生存" if enemy.is_alive else "撃破"
 			text += "%s\n  HP: %d/%d (%s)\n" % [
 				enemy.name,
-				enemy.get_meta("current_hp"),
-				enemy.get_meta("max_hp"),
+				enemy.current_hp,
+				enemy.max_hp,
 				status
 			]
 		enemy_info.text = text
